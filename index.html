@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>HW5 - Textures & Mapping (all primitives)</title>
+<title>HW5 - Textures & Creative Animations</title>
 <style>
   body { margin:0; background:#111; color:#fff; font-family:sans-serif; }
   canvas { width:100vw; height:85vh; display:block; }
@@ -18,8 +18,6 @@
   <label>Scale <input type="range" id="scale" min="0.3" max="2" step="0.01" value="1"></label>
 </div>
 
-<script src="Primitives.js"></script>
-
 <!-- Vertex Shader -->
 <script id="vs" type="x-shader/x-vertex">
 attribute vec3 aPosition;
@@ -32,10 +30,10 @@ uniform mat4 uView;
 uniform mat4 uProj;
 uniform mat3 uNormalMat;
 
-varying vec3 vPosition;
 varying vec3 vNormal;
 varying vec3 vTangent;
 varying vec2 vUV;
+varying vec3 vPosition;
 
 void main(){
   vec4 worldPos = uModel * vec4(aPosition, 1.0);
@@ -78,47 +76,54 @@ vec3 phong(vec3 N, vec3 baseColor){
 void main(){
   vec3 N = normalize(vNormal);
   vec3 T = normalize(vTangent);
-  vec3 B = normalize(cross(N, T));
-  mat3 TBN = mat3(T, B, N);
+  vec3 B = normalize(cross(N,T));
+  mat3 TBN = mat3(T,B,N);
 
   vec3 baseColor = vec3(0.8);
 
-  if(uWhich == 0){
-    baseColor = texture2D(uTex, vUV).rgb; // sphere
-  } else if(uWhich == 1){
+  if(uWhich==0){ // Sphere with animated checker
     vec3 samp = texture2D(uTex, vUV).rgb;
-    float s = abs(sin((vUV.x + uTime*0.6)*20.0));
-    baseColor = mix(samp, mix(vec3(0.95,0.9,0.7), vec3(0.15,0.4,0.85), s), 0.6);
-  } else if(uWhich == 2){
-    float n = fract(sin(dot(vUV.xy ,vec2(12.9898,78.233)) + uTime*0.1) * 43758.5453);
-    N = normalize(vNormal + (n - 0.5) * 0.6);
-    baseColor = vec3(0.9, 0.7, 0.5);
-  } else {
-    baseColor = texture2D(uTex, vUV).rgb;
+    float pulse = 0.5 + 0.5*sin(uTime*3.0);
+    baseColor = mix(samp, samp*1.5, pulse);
+  } else if(uWhich==1){ // Cylinder
+    float vShift = fract(vUV.y + uTime*0.2);
+    baseColor = texture2D(uTex, vec2(vUV.x,vShift)).rgb;
+  } else if(uWhich==2){ // Cone
+    float n = fract(sin(dot(vUV.xy, vec2(12.9898,78.233)) + uTime*0.5) * 43758.5453);
+    N = normalize(vNormal + (n-0.5)*0.6);
+    baseColor = vec3(0.9,0.7,0.5);
+  } else if(uWhich==3){ // Torus rainbow wave
+    float c = 0.5 + 0.5*sin(uTime + vUV.x*10.0 + vUV.y*10.0);
+    baseColor = vec3(c, 1.0-c, 0.5+c*0.5);
   }
 
   if(uUseNormalMap){
     vec3 mapN = texture2D(uNormalTex, vUV).rgb;
-    vec3 mapped = normalize(mapN * 2.0 - 1.0);
-    N = normalize(TBN * mapped);
+    mapN = mapN*2.0 - 1.0;
+    N = normalize(TBN * mapN);
   }
 
   vec3 outCol = phong(N, baseColor);
-  gl_FragColor = vec4(outCol, 1.0);
+  gl_FragColor = vec4(outCol,1.0);
 }
 </script>
 
+<script src="Primitives.js"></script>
+
 <script>
+// ===== WebGL setup =====
 const canvas = document.getElementById('glcanvas');
 const gl = canvas.getContext('webgl');
 if(!gl){ alert("WebGL not available"); throw new Error("WebGL not available"); }
 
-function resize(){ canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight; gl.viewport(0,0,canvas.width,canvas.height); }
+function resize(){ 
+  canvas.width = canvas.clientWidth; 
+  canvas.height = canvas.clientHeight; 
+  gl.viewport(0,0,canvas.width,canvas.height); 
+}
 window.addEventListener('resize', resize); resize();
 
-gl.enable(gl.DEPTH_TEST);
-
-// ====== SHADER SETUP ======
+// ===== Shader helpers =====
 function compile(id){
   const src = document.getElementById(id).textContent;
   const type = id==='vs'? gl.VERTEX_SHADER : gl.FRAGMENT_SHADER;
@@ -133,10 +138,49 @@ function createProg(vsId, fsId){
   if(!gl.getProgramParameter(p, gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(p));
   return p;
 }
+
+// ===== Textures =====
+function loadTexture(url){
+  const tex = gl.createTexture();
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  img.onload = ()=> {
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  };
+  img.src = url;
+  return tex;
+}
+
+function makeChecksTexture(size=256,numChecks=8){
+  const canvasTex = document.createElement('canvas');
+  canvasTex.width = canvasTex.height = size;
+  const ctx = canvasTex.getContext('2d');
+  const cs = size/numChecks;
+  for(let y=0;y<numChecks;y++){
+    for(let x=0;x<numChecks;x++){
+      ctx.fillStyle = (x+y)%2===0?'#fff':'#000';
+      ctx.fillRect(x*cs,y*cs,cs,cs);
+    }
+  }
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,canvasTex);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  return tex;
+}
+
+// ===== Program =====
 const program = createProg('vs','fs');
 gl.useProgram(program);
+gl.enable(gl.DEPTH_TEST);
 
-// uniform locations
+// ===== Uniforms & attributes =====
 const uModel = gl.getUniformLocation(program,'uModel');
 const uView  = gl.getUniformLocation(program,'uView');
 const uProj  = gl.getUniformLocation(program,'uProj');
@@ -153,16 +197,28 @@ const aNormal = gl.getAttribLocation(program,'aNormal');
 const aTangent = gl.getAttribLocation(program,'aTangent');
 const aUV = gl.getAttribLocation(program,'aUV');
 
-// ====== PRIMITIVES ======
+// ===== Primitives =====
 const sphere = createSphere(gl,0.5,36,36);
 const cylinder = createCylinder(gl,0.3,0.8,36);
 const cone = createCone(gl,0.4,0.7,36);
 const torus = createTorus(gl,0.35,0.1,36,28);
 
-// ====== MATH HELPERS ======
+// ===== Textures =====
+const checkerTex = makeChecksTexture(512,8);
+const normalTex = loadTexture('normalMap.png'); // bump map
+const cylTex = loadTexture('brick.jpg');
+
+// ===== UI & State =====
+let camera=[0,1.2,4];
+let time=0, rotate=true, scale=1, anim=true;
+document.getElementById("toggleAnim").onclick = ()=>{ anim = !anim; };
+document.getElementById("rotate").onchange = e=>{ rotate = e.target.checked; };
+document.getElementById("scale").oninput = e=>{ scale=parseFloat(e.target.value); };
+
+// ===== Math helpers =====
 function perspective(fovy, aspect, near, far){
   const f = 1/Math.tan(fovy/2), nf=1/(near-far), out=new Float32Array(16);
-  out[0]=f/aspect; out[5]=f; out[10]=(far+near)*nf; out[11]=-1; out[14]=2*far*near*nf;
+  out[0]=f/aspect; out[5]=f; out[10]=(far+near)*nf; out[11]=-1; out[14]=2*far*near*nf; out[15]=0;
   return out;
 }
 function lookAt(eye,center,up){
@@ -177,86 +233,27 @@ function sub(a,b){ return a.map((x,i)=>x-b[i]); }
 function cross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
 function dot(a,b){ return a.reduce((s,v,i)=>s+v*b[i],0); }
 
-// ====== GLOBAL STATE ======
-let camera=[0,1.2,4];
-let time=0, rotate=true, scale=1, anim=true;
-document.getElementById("toggleAnim").onclick = ()=>{ anim = !anim; };
-document.getElementById("rotate").onchange = e=>{ rotate = e.target.checked; };
-document.getElementById("scale").oninput = e=>{ scale=parseFloat(e.target.value); };
-
-// ====== TEXTURES ======
-function loadTextureNoMipmap(url){
-  const tex = gl.createTexture();
-  const img = new Image();
-  img.crossOrigin = "anonymous";
-  img.onload = ()=>{
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  };
-  img.onerror = ()=>{ console.warn("Failed to load",url); };
-  img.src = url;
-  return tex;
-}
-const brickTex = loadTextureNoMipmap('brick.jpg');
-
-// Procedural checkerboard for torus
-function makeChecksTexture(size = 512, checks = 8) {
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const ctx = c.getContext('2d');
-  const checkSize = size / checks;
-  for (let y = 0; y < checks; y++) {
-    for (let x = 0; x < checks; x++) {
-      ctx.fillStyle = (x + y) % 2 === 0 ? '#ffffff' : '#000000';
-      ctx.fillRect(x * checkSize, y * checkSize, checkSize, checkSize);
-    }
-  }
-  const tex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  return tex;
-}
-const checksTex = makeChecksTexture(512, 8);
-
-// ====== DRAW HELPERS ======
-function modelMat(tx, ty, tz, angleY){
-  const c = Math.cos(angleY), s = Math.sin(angleY);
+function modelMat(tx,ty,tz,angleY){
+  const c=Math.cos(angleY), s=Math.sin(angleY);
   return new Float32Array([
-    c*scale, 0, s*scale, 0,
-    0, scale, 0, 0,
-    -s*scale, 0, c*scale, 0,
-    tx, ty, tz, 1
+    c*scale,0,s*scale,0,
+    0,scale,0,0,
+   -s*scale,0,c*scale,0,
+    tx,ty,tz,1
   ]);
 }
 function normalMatrix(model){
-  return new Float32Array([ model[0],model[1],model[2], model[4],model[5],model[6], model[8],model[9],model[10] ]);
+  return new Float32Array([model[0],model[1],model[2], model[4],model[5],model[6], model[8],model[9],model[10]]);
 }
 function bindAttribs(prim){
-  gl.bindBuffer(gl.ARRAY_BUFFER, prim.vbo);
-  gl.enableVertexAttribArray(aPosition); gl.vertexAttribPointer(aPosition,3,gl.FLOAT,false,0,0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, prim.nbo);
-  gl.enableVertexAttribArray(aNormal); gl.vertexAttribPointer(aNormal,3,gl.FLOAT,false,0,0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, prim.tbo);
-  gl.enableVertexAttribArray(aTangent); gl.vertexAttribPointer(aTangent,3,gl.FLOAT,false,0,0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, prim.uvbo);
-  gl.enableVertexAttribArray(aUV); gl.vertexAttribPointer(aUV,2,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, prim.vbo); gl.enableVertexAttribArray(aPosition); gl.vertexAttribPointer(aPosition,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, prim.nbo); gl.enableVertexAttribArray(aNormal); gl.vertexAttribPointer(aNormal,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, prim.tbo); gl.enableVertexAttribArray(aTangent); gl.vertexAttribPointer(aTangent,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, prim.uvbo); gl.enableVertexAttribArray(aUV); gl.vertexAttribPointer(aUV,2,gl.FLOAT,false,0,0);
 }
-function drawPrimitive(prim){
-  bindAttribs(prim);
-  gl.drawArrays(gl.TRIANGLES,0,prim.vertexCount);
-}
+function drawPrimitive(prim){ bindAttribs(prim); gl.drawArrays(gl.TRIANGLES,0,prim.vertexCount); }
 
-// ====== RENDER LOOP ======
+// ===== Render loop =====
 function render(){
   resize();
   gl.clearColor(0.08,0.08,0.12,1.0);
@@ -269,17 +266,18 @@ function render(){
   gl.uniform1f(uTime,time);
   gl.uniform3fv(uLightDir,normalize([1.0,1.0,0.8]));
 
-  const angle = rotate ? time*0.45 : 0;
+  const angle = rotate ? time*0.5 : 0;
 
-  // Sphere
+  // Sphere with bump map
   let model = modelMat(-1.6,0,0,angle);
   gl.uniformMatrix4fv(uModel,false,model);
   gl.uniformMatrix3fv(uNormalMat,false,normalMatrix(model));
   gl.uniform1i(uWhich,0);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, brickTex);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, checkerTex);
   gl.uniform1i(uTex,0);
-  gl.uniform1i(uUseNormalMap,0);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, normalTex);
+  gl.uniform1i(uNormalTex,1);
+  gl.uniform1i(uUseNormalMap,1);
   drawPrimitive(sphere);
 
   // Cylinder
@@ -287,7 +285,7 @@ function render(){
   gl.uniformMatrix4fv(uModel,false,model);
   gl.uniformMatrix3fv(uNormalMat,false,normalMatrix(model));
   gl.uniform1i(uWhich,1);
-  gl.bindTexture(gl.TEXTURE_2D, brickTex);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, cylTex);
   gl.uniform1i(uTex,0);
   gl.uniform1i(uUseNormalMap,0);
   drawPrimitive(cylinder);
@@ -300,20 +298,18 @@ function render(){
   gl.uniform1i(uUseNormalMap,0);
   drawPrimitive(cone);
 
-  // Torus (checkerboard)
-  model = modelMat(0,0,2,angle);
+  // Torus
+  const torusY = 0.3 + 0.15*Math.sin(time*2);
+  model = modelMat(0,torusY,2,angle);
   gl.uniformMatrix4fv(uModel,false,model);
   gl.uniformMatrix3fv(uNormalMat,false,normalMatrix(model));
   gl.uniform1i(uWhich,3);
-  gl.bindTexture(gl.TEXTURE_2D, checksTex);
-  gl.uniform1i(uTex,0);
   gl.uniform1i(uUseNormalMap,0);
   drawPrimitive(torus);
 
   if(anim) time += 0.016;
   requestAnimationFrame(render);
 }
-
 requestAnimationFrame(render);
 </script>
 </body>
