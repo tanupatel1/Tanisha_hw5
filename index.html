@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>HW5 - Textures & Mapping (all primitives)</title>
+<style>
+  body { margin:0; background:#111; color:#fff; font-family:sans-serif; }
+  canvas { width:100vw; height:85vh; display:block; }
+  #ui { padding:10px; text-align:center; }
+  button,label{margin:5px;}
+</style>
+</head>
+<body>
+<canvas id="glcanvas"></canvas>
+<div id="ui">
+  <button id="toggleAnim">Toggle Animation</button>
+  <label>Rotate <input type="checkbox" id="rotate" checked></label>
+  <label>Scale <input type="range" id="scale" min="0.3" max="2" step="0.01" value="1"></label>
+</div>
+
+<script src="Primitives.js"></script>
+
+<!-- Vertex Shader -->
+<script id="vs" type="x-shader/x-vertex">
+attribute vec3 aPosition;
+attribute vec3 aNormal;
+attribute vec3 aTangent;
+attribute vec2 aUV;
+
+uniform mat4 uModel;
+uniform mat4 uView;
+uniform mat4 uProj;
+uniform mat3 uNormalMat;
+
+varying vec3 vPosition;
+varying vec3 vNormal;
+varying vec3 vTangent;
+varying vec2 vUV;
+
+void main(){
+  vec4 worldPos = uModel * vec4(aPosition, 1.0);
+  vPosition = worldPos.xyz;
+  vNormal = normalize(uNormalMat * aNormal);
+  vTangent = normalize(mat3(uModel) * aTangent);
+  vUV = aUV;
+  gl_Position = uProj * uView * worldPos;
+}
+</script>
+
+<!-- Fragment Shader -->
+<script id="fs" type="x-shader/x-fragment">
+precision mediump float;
+
+uniform float uTime;
+uniform int uWhich;
+uniform vec3 uLightDir;
+uniform sampler2D uTex;
+uniform sampler2D uNormalTex;
+uniform bool uUseNormalMap;
+
+varying vec3 vNormal;
+varying vec3 vTangent;
+varying vec2 vUV;
+varying vec3 vPosition;
+
+vec3 phong(vec3 N, vec3 baseColor){
+  vec3 L = normalize(uLightDir);
+  vec3 V = normalize(-vPosition);
+  vec3 R = reflect(-L, N);
+  float diff = max(dot(N,L), 0.0);
+  float spec = pow(max(dot(R,V),0.0), 32.0);
+  vec3 ambient = 0.18 * baseColor;
+  vec3 diffuse = 0.65 * diff * baseColor;
+  vec3 specular = 0.4 * spec * vec3(1.0);
+  return ambient + diffuse + specular;
+}
+
+void main(){
+  vec3 N = normalize(vNormal);
+  vec3 T = normalize(vTangent);
+  vec3 B = normalize(cross(N, T));
+  mat3 TBN = mat3(T, B, N);
+
+  vec3 baseColor = vec3(0.8);
+
+  if(uWhich == 0){
+    baseColor = texture2D(uTex, vUV).rgb; // sphere
+  } else if(uWhich == 1){
+    vec3 samp = texture2D(uTex, vUV).rgb;
+    float s = abs(sin((vUV.x + uTime*0.6)*20.0));
+    baseColor = mix(samp, mix(vec3(0.95,0.9,0.7), vec3(0.15,0.4,0.85), s), 0.6);
+  } else if(uWhich == 2){
+    float n = fract(sin(dot(vUV.xy ,vec2(12.9898,78.233)) + uTime*0.1) * 43758.5453);
+    N = normalize(vNormal + (n - 0.5) * 0.6);
+    baseColor = vec3(0.9, 0.7, 0.5);
+  } else {
+    baseColor = texture2D(uTex, vUV).rgb;
+  }
+
+  if(uUseNormalMap){
+    vec3 mapN = texture2D(uNormalTex, vUV).rgb;
+    vec3 mapped = normalize(mapN * 2.0 - 1.0);
+    N = normalize(TBN * mapped);
+  }
+
+  vec3 outCol = phong(N, baseColor);
+  gl_FragColor = vec4(outCol, 1.0);
+}
+</script>
+
+<script>
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl');
+if(!gl){ alert("WebGL not available"); throw new Error("WebGL not available"); }
+
+function resize(){ canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight; gl.viewport(0,0,canvas.width,canvas.height); }
+window.addEventListener('resize', resize); resize();
+
+gl.enable(gl.DEPTH_TEST);
+
+// ====== SHADER SETUP ======
+function compile(id){
+  const src = document.getElementById(id).textContent;
+  const type = id==='vs'? gl.VERTEX_SHADER : gl.FRAGMENT_SHADER;
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+  return s;
+}
+function createProg(vsId, fsId){
+  const p = gl.createProgram(); gl.attachShader(p, compile(vsId)); gl.attachShader(p, compile(fsId)); gl.linkProgram(p);
+  if(!gl.getProgramParameter(p, gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(p));
+  return p;
+}
+const program = createProg('vs','fs');
+gl.useProgram(program);
+
+// uniform locations
+const uModel = gl.getUniformLocation(program,'uModel');
+const uView  = gl.getUniformLocation(program,'uView');
+const uProj  = gl.getUniformLocation(program,'uProj');
+const uNormalMat = gl.getUniformLocation(program,'uNormalMat');
+const uTime  = gl.getUniformLocation(program,'uTime');
+const uWhich = gl.getUniformLocation(program,'uWhich');
+const uLightDir = gl.getUniformLocation(program,'uLightDir');
+const uTex = gl.getUniformLocation(program,'uTex');
+const uNormalTex = gl.getUniformLocation(program,'uNormalTex');
+const uUseNormalMap = gl.getUniformLocation(program,'uUseNormalMap');
+
+const aPosition = gl.getAttribLocation(program,'aPosition');
+const aNormal = gl.getAttribLocation(program,'aNormal');
+const aTangent = gl.getAttribLocation(program,'aTangent');
+const aUV = gl.getAttribLocation(program,'aUV');
+
+// ====== PRIMITIVES ======
+const sphere = createSphere(gl,0.5,36,36);
+const cylinder = createCylinder(gl,0.3,0.8,36);
+const cone = createCone(gl,0.4,0.7,36);
+const torus = createTorus(gl,0.35,0.1,36,28);
+
+// ====== MATH HELPERS ======
+function perspective(fovy, aspect, near, far){
+  const f = 1/Math.tan(fovy/2), nf=1/(near-far), out=new Float32Array(16);
+  out[0]=f/aspect; out[5]=f; out[10]=(far+near)*nf; out[11]=-1; out[14]=2*far*near*nf;
+  return out;
+}
+function lookAt(eye,center,up){
+  const f=normalize(sub(center,eye)), s=normalize(cross(f,up)), u=cross(s,f);
+  const m=new Float32Array(16);
+  m.set([s[0],u[0],-f[0],0, s[1],u[1],-f[1],0, s[2],u[2],-f[2],0, 0,0,0,1]);
+  m[12]=-dot(s,eye); m[13]=-dot(u,eye); m[14]=dot(f,eye);
+  return m;
+}
+function normalize(v){ const l=Math.hypot(...v); return v.map(x=>x/l); }
+function sub(a,b){ return a.map((x,i)=>x-b[i]); }
+function cross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function dot(a,b){ return a.reduce((s,v,i)=>s+v*b[i],0); }
+
+// ====== GLOBAL STATE ======
+let camera=[0,1.2,4];
+let time=0, rotate=true, scale=1, anim=true;
+document.getElementById("toggleAnim").onclick = ()=>{ anim = !anim; };
+document.getElementById("rotate").onchange = e=>{ rotate = e.target.checked; };
+document.getElementById("scale").oninput = e=>{ scale=parseFloat(e.target.value); };
+
+// ====== TEXTURES ======
+function loadTextureNoMipmap(url){
+  const tex = gl.createTexture();
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  img.onload = ()=>{
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  };
+  img.onerror = ()=>{ console.warn("Failed to load",url); };
+  img.src = url;
+  return tex;
+}
+const brickTex = loadTextureNoMipmap('brick.jpg');
+
+// Procedural checkerboard for torus
+function makeChecksTexture(size = 512, checks = 8) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const checkSize = size / checks;
+  for (let y = 0; y < checks; y++) {
+    for (let x = 0; x < checks; x++) {
+      ctx.fillStyle = (x + y) % 2 === 0 ? '#ffffff' : '#000000';
+      ctx.fillRect(x * checkSize, y * checkSize, checkSize, checkSize);
+    }
+  }
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  return tex;
+}
+const checksTex = makeChecksTexture(512, 8);
+
+// ====== DRAW HELPERS ======
+function modelMat(tx, ty, tz, angleY){
+  const c = Math.cos(angleY), s = Math.sin(angleY);
+  return new Float32Array([
+    c*scale, 0, s*scale, 0,
+    0, scale, 0, 0,
+    -s*scale, 0, c*scale, 0,
+    tx, ty, tz, 1
+  ]);
+}
+function normalMatrix(model){
+  return new Float32Array([ model[0],model[1],model[2], model[4],model[5],model[6], model[8],model[9],model[10] ]);
+}
+function bindAttribs(prim){
+  gl.bindBuffer(gl.ARRAY_BUFFER, prim.vbo);
+  gl.enableVertexAttribArray(aPosition); gl.vertexAttribPointer(aPosition,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, prim.nbo);
+  gl.enableVertexAttribArray(aNormal); gl.vertexAttribPointer(aNormal,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, prim.tbo);
+  gl.enableVertexAttribArray(aTangent); gl.vertexAttribPointer(aTangent,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, prim.uvbo);
+  gl.enableVertexAttribArray(aUV); gl.vertexAttribPointer(aUV,2,gl.FLOAT,false,0,0);
+}
+function drawPrimitive(prim){
+  bindAttribs(prim);
+  gl.drawArrays(gl.TRIANGLES,0,prim.vertexCount);
+}
+
+// ====== RENDER LOOP ======
+function render(){
+  resize();
+  gl.clearColor(0.08,0.08,0.12,1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  const proj = perspective(Math.PI/4, canvas.width/canvas.height, 0.1, 100);
+  const view = lookAt(camera,[0,0,0],[0,1,0]);
+  gl.uniformMatrix4fv(uView,false,view);
+  gl.uniformMatrix4fv(uProj,false,proj);
+  gl.uniform1f(uTime,time);
+  gl.uniform3fv(uLightDir,normalize([1.0,1.0,0.8]));
+
+  const angle = rotate ? time*0.45 : 0;
+
+  // Sphere
+  let model = modelMat(-1.6,0,0,angle);
+  gl.uniformMatrix4fv(uModel,false,model);
+  gl.uniformMatrix3fv(uNormalMat,false,normalMatrix(model));
+  gl.uniform1i(uWhich,0);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, brickTex);
+  gl.uniform1i(uTex,0);
+  gl.uniform1i(uUseNormalMap,0);
+  drawPrimitive(sphere);
+
+  // Cylinder
+  model = modelMat(1.6,0,0,angle);
+  gl.uniformMatrix4fv(uModel,false,model);
+  gl.uniformMatrix3fv(uNormalMat,false,normalMatrix(model));
+  gl.uniform1i(uWhich,1);
+  gl.bindTexture(gl.TEXTURE_2D, brickTex);
+  gl.uniform1i(uTex,0);
+  gl.uniform1i(uUseNormalMap,0);
+  drawPrimitive(cylinder);
+
+  // Cone
+  model = modelMat(0,0,-2,angle);
+  gl.uniformMatrix4fv(uModel,false,model);
+  gl.uniformMatrix3fv(uNormalMat,false,normalMatrix(model));
+  gl.uniform1i(uWhich,2);
+  gl.uniform1i(uUseNormalMap,0);
+  drawPrimitive(cone);
+
+  // Torus (checkerboard)
+  model = modelMat(0,0,2,angle);
+  gl.uniformMatrix4fv(uModel,false,model);
+  gl.uniformMatrix3fv(uNormalMat,false,normalMatrix(model));
+  gl.uniform1i(uWhich,3);
+  gl.bindTexture(gl.TEXTURE_2D, checksTex);
+  gl.uniform1i(uTex,0);
+  gl.uniform1i(uUseNormalMap,0);
+  drawPrimitive(torus);
+
+  if(anim) time += 0.016;
+  requestAnimationFrame(render);
+}
+
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
